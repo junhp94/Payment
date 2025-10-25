@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const PRESETS = ["10", "25", "50", "100", "250", "Other"];
+const PRESETS = ["1", "2", "3", "5", "10", "Other"];
 
 export default function App() {
   const [amount, setAmount] = useState("50");
@@ -9,7 +9,6 @@ export default function App() {
   const [otherAmount, setOtherAmount] = useState("");
 
   const [program, setProgram] = useState("General");
-
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -25,9 +24,9 @@ export default function App() {
   const [orderId] = useState(() => `FD-${Date.now()}`);
 
   const [showPayment, setShowPayment] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState(null); // ✅ For success/error message
+  const [paymentStatus, setPaymentStatus] = useState(null);
 
-  const hostedFormLoadedRef = useRef(false);
+  const checkoutStartedRef = useRef(false);
 
   function validate() {
     const e = {};
@@ -46,59 +45,75 @@ export default function App() {
     if (Object.keys(eMap).length > 0) return;
 
     setSubmitting(true);
-    setShowPayment(true);
-  }
+    setPaymentStatus(null); // Reset previous messages
 
-  // ✅ Initialize Hosted Tokenization when payment section is shown
-  useEffect(() => {
-    if (!showPayment || hostedFormLoadedRef.current) return;
-    hostedFormLoadedRef.current = true;
+    try {
+      const donor = {
+        name,
+        email,
+        phone,
+        address1: addr1,
+        address2: addr2,
+        city,
+        province,
+        postal,
+        country,
+        program,
+      };
 
-    const hf = window?.HostedForm;
+      const response = await fetch("/api/checkout/preload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: useOther ? otherAmount : amount,
+          orderId,
+          donor,
+        }),
+      });
 
-    if (!hf) {
-      setPaymentStatus({ error: true, message: "HostedForm script not found. Check index.html." });
-      return;
-    }
+      const data = await response.json();
 
-    window.HostedForm.init({
-      profile_id: "ht16O7YEHBAAXMV",
-      environment: "qa",
-      target: "monerisCheckout",
-      display: "iframe",
-      callback: async function (response) {
-        if (response?.data_key) {
-          setPaymentStatus(null); // Clear previous state
+      if (data.ticket) {
+        setShowPayment(true);
 
-          const requestBody = {
-            data_key: response.data_key,
-            amount: Number(useOther ? otherAmount : amount).toFixed(2),
-            orderId,
-          };
-
-          try {
-            const res = await fetch("/api/checkout/complete", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(requestBody),
+        // Initialize Moneris Checkout iframe (only once)
+        if (!checkoutStartedRef.current) {
+          checkoutStartedRef.current = true;
+          const CheckoutClass = window.monerisCheckout;
+          if (!CheckoutClass) {
+            setPaymentStatus({
+              error: true,
+              message: "Moneris Checkout script not loaded. Check index.html.",
             });
-
-            const result = await res.json();
-
-            if (result.success) {
-              setPaymentStatus({ success: true, message: "✅ Payment successful! Thank you!" });
-            } else {
-              throw new Error(result?.error || "Payment failed");
-            }
-          } catch (err) {
-            setPaymentStatus({ error: true, message: "❌ Payment failed. Please try again." });
+            return;
           }
-        } else {
-          setPaymentStatus({ error: true, message: "❌ Failed to retrieve payment token." });
+
+          const chkt = new CheckoutClass();
+          chkt.setMode("qa"); // 'qa' for testing
+          chkt.setCheckoutDiv("monerisCheckout");
+
+          chkt.setCallback("payment_complete", (payload) => {
+            console.log("Payment complete:", payload);
+            setPaymentStatus({ success: true, message: "✅ Payment successful! Thank you!" });
+          });
+
+          chkt.setCallback("error_event", (err) => {
+            console.error("Moneris error:", err);
+            setPaymentStatus({ error: true, message: "❌ Payment failed. Please try again." });
+          });
+
+          chkt.startCheckout(data.ticket);
         }
-      },
-    });
-  }, [showPayment]);
+      } else {
+        throw new Error("No ticket received from backend");
+      }
+    } catch (err) {
+      console.error(err);
+      setPaymentStatus({ error: true, message: "❌ Could not start secure payment. Try again." });
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   const disabled = submitting || showPayment;
 
@@ -161,188 +176,184 @@ export default function App() {
 
         <div className="divider" />
 
-        <h2 className="sectionTitle">Program Designation (optional)</h2>
-        <div className="fieldRow">
-          <label className="label" htmlFor="program">Program</label>
-          <select
-            id="program"
-            className="select"
-            value={program}
-            onChange={(e) => setProgram(e.target.value)}
-            disabled={disabled}
-          >
-            <option>General</option>
-            <option>News & Public Affairs</option>
-            <option>Music Programming</option>
-            <option>Training & Workshops</option>
-            <option>Special Projects</option>
-          </select>
-        </div>
+<h2 className="sectionTitle">Program Designation (optional)</h2>
+<div className="fieldRow">
+  <label className="label" htmlFor="program">Program</label>
+  <select
+    id="program"
+    className="select"
+    value={program}
+    onChange={(e) => setProgram(e.target.value)}
+    disabled={disabled}
+  >
+    <option>General</option>
+    <option>News & Public Affairs</option>
+    <option>Music Programming</option>
+    <option>Training & Workshops</option>
+    <option>Special Projects</option>
+  </select>
+</div>
 
-        <div className="divider" />
+<div className="divider" />
 
-        <h2 className="sectionTitle">Your Information</h2>
+<h2 className="sectionTitle">Your Information</h2>
 
-        {/* Your full form stays as-is here */}
-        {/* I did not change any of your input fields */}
+<div className="grid2">
+  <div className="fieldCol">
+    <label className="label" htmlFor="name">Full Name</label>
+    <input
+      id="name"
+      className={`input ${errors.name ? "input--error" : ""}`}
+      value={name}
+      onChange={(e) => setName(e.target.value)}
+      disabled={disabled}
+      placeholder="Jane Doe"
+      autoComplete="name"
+    />
+    {errors.name && <div className="error">{errors.name}</div>}
+  </div>
 
-        <div className="grid2">
-          <div className="fieldCol">
-            <label className="label" htmlFor="name">Full Name</label>
-            <input
-              id="name"
-              className={`input ${errors.name ? "input--error" : ""}`}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={disabled}
-              placeholder="Jane Doe"
-              autoComplete="name"
-            />
-            {errors.name && <div className="error">{errors.name}</div>}
-          </div>
+  <div className="fieldCol">
+    <label className="label" htmlFor="email">Email</label>
+    <input
+      id="email"
+      type="email"
+      className={`input ${errors.email ? "input--error" : ""}`}
+      value={email}
+      onChange={(e) => setEmail(e.target.value)}
+      disabled={disabled}
+      placeholder="jane@example.com"
+      autoComplete="email"
+    />
+    {errors.email && <div className="error">{errors.email}</div>}
+  </div>
+</div>
 
-          <div className="fieldCol">
-            <label className="label" htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              className={`input ${errors.email ? "input--error" : ""}`}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={disabled}
-              placeholder="jane@example.com"
-              autoComplete="email"
-            />
-            {errors.email && <div className="error">{errors.email}</div>}
-          </div>
-        </div>
+<div className="grid2">
+  <div className="fieldCol">
+    <label className="label" htmlFor="phone">Phone (optional)</label>
+    <input
+      id="phone"
+      className="input"
+      value={phone}
+      onChange={(e) => setPhone(e.target.value)}
+      disabled={disabled}
+      placeholder="(xxx) xxx-xxxx"
+      autoComplete="tel"
+    />
+  </div>
+</div>
 
-        <div className="grid2">
-          <div className="fieldCol">
-            <label className="label" htmlFor="phone">Phone (optional)</label>
-            <input
-              id="phone"
-              className="input"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              disabled={disabled}
-              placeholder="(xxx) xxx-xxxx"
-              autoComplete="tel"
-            />
-          </div>
-        </div>
+<div className="grid2">
+  <div className="fieldCol">
+    <label className="label" htmlFor="addr1">Address Line 1</label>
+    <input
+      id="addr1"
+      className="input"
+      value={addr1}
+      onChange={(e) => setAddr1(e.target.value)}
+      disabled={disabled}
+      placeholder="123 University Dr."
+      autoComplete="address-line1"
+    />
+  </div>
+  <div className="fieldCol">
+    <label className="label" htmlFor="addr2">Address Line 2 (optional)</label>
+    <input
+      id="addr2"
+      className="input"
+      value={addr2}
+      onChange={(e) => setAddr2(e.target.value)}
+      disabled={disabled}
+      placeholder="Apt / Suite"
+      autoComplete="address-line2"
+    />
+  </div>
+</div>
 
-        <div className="grid2">
-          <div className="fieldCol">
-            <label className="label" htmlFor="addr1">Address Line 1</label>
-            <input
-              id="addr1"
-              className="input"
-              value={addr1}
-              onChange={(e) => setAddr1(e.target.value)}
-              disabled={disabled}
-              placeholder="123 University Dr."
-              autoComplete="address-line1"
-            />
-          </div>
-          <div className="fieldCol">
-            <label className="label" htmlFor="addr2">Address Line 2 (optional)</label>
-            <input
-              id="addr2"
-              className="input"
-              value={addr2}
-              onChange={(e) => setAddr2(e.target.value)}
-              disabled={disabled}
-              placeholder="Apt / Suite"
-              autoComplete="address-line2"
-            />
-          </div>
-        </div>
+<div className="grid3">
+  <div className="fieldCol">
+    <label className="label" htmlFor="city">City</label>
+    <input
+      id="city"
+      className="input"
+      value={city}
+      onChange={(e) => setCity(e.target.value)}
+      disabled={disabled}
+      autoComplete="address-level2"
+    />
+  </div>
+  <div className="fieldCol">
+    <label className="label" htmlFor="province">Province/State</label>
+    <input
+      id="province"
+      className="input"
+      value={province}
+      onChange={(e) => setProvince(e.target.value)}
+      disabled={disabled}
+      autoComplete="address-level1"
+    />
+  </div>
+  <div className="fieldCol">
+    <label className="label" htmlFor="postal">Postal/ZIP</label>
+    <input
+      id="postal"
+      className="input"
+      value={postal}
+      onChange={(e) => setPostal(e.target.value)}
+      disabled={disabled}
+      autoComplete="postal-code"
+    />
+  </div>
+</div>
 
-        <div className="grid3">
-          <div className="fieldCol">
-            <label className="label" htmlFor="city">City</label>
-            <input
-              id="city"
-              className="input"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              disabled={disabled}
-              autoComplete="address-level2"
-            />
-          </div>
-          <div className="fieldCol">
-            <label className="label" htmlFor="province">Province/State</label>
-            <input
-              id="province"
-              className="input"
-              value={province}
-              onChange={(e) => setProvince(e.target.value)}
-              disabled={disabled}
-              autoComplete="address-level1"
-            />
-          </div>
-          <div className="fieldCol">
-            <label className="label" htmlFor="postal">Postal/ZIP</label>
-            <input
-              id="postal"
-              className="input"
-              value={postal}
-              onChange={(e) => setPostal(e.target.value)}
-              disabled={disabled}
-              autoComplete="postal-code"
-            />
-          </div>
-        </div>
+<div className="fieldRow">
+  <label className="label" htmlFor="country">Country</label>
+  <input
+    id="country"
+    className="input"
+    value={country}
+    onChange={(e) => setCountry(e.target.value)}
+    disabled={disabled}
+    autoComplete="country-name"
+  />
+</div>
 
-        <div className="fieldRow">
-          <label className="label" htmlFor="country">Country</label>
-          <input
-            id="country"
-            className="input"
-            value={country}
-            onChange={(e) => setCountry(e.target.value)}
-            disabled={disabled}
-            autoComplete="country-name"
-          />
-        </div>
+<div className="ctaRow">
+  <button
+    type="submit"
+    className="btnPrimary"
+    disabled={disabled}
+    aria-disabled={disabled}
+  >
+    {submitting || showPayment ? "Proceeding…" : "Proceed to Secure Payment"}
+  </button>
+  <div className="note">Card processing is handled securely by Moneris.</div>
+</div>
+</form>
 
-        <div className="ctaRow">
-          <button
-            type="submit"
-            className="btnPrimary"
-            disabled={disabled}
-            aria-disabled={disabled}
-          >
-            {submitting || showPayment ? "Proceeding…" : "Proceed to Secure Payment"}
-          </button>
-          <div className="note">Card processing is handled securely by Moneris.</div>
-        </div>
-      </form>
+{showPayment && (
+<section className="card paymentCard" aria-live="polite">
+  <h2 className="sectionTitle">Secure Payment</h2>
+  <p className="muted">
+    Order ID: <strong>{orderId}</strong> — Amount:{" "}
+    <strong>${useOther ? Number(otherAmount).toFixed(2) : Number(amount).toFixed(2)} CAD</strong>
+  </p>
+  <div id="monerisCheckout" className="monerisBox" />
 
-      {/* ✅ Hosted Payment Section */}
-      {showPayment && (
-        <section className="card paymentCard" aria-live="polite">
-          <h2 className="sectionTitle">Secure Payment</h2>
-          <p className="muted">
-            Order ID: <strong>{orderId}</strong> — Amount:{" "}
-            <strong>${useOther ? Number(otherAmount).toFixed(2) : Number(amount).toFixed(2)} CAD</strong>
-          </p>
-          <div id="monerisCheckout" className="monerisBox" />
+  {paymentStatus?.success && (
+    <p className="successMessage">{paymentStatus.message}</p>
+  )}
+  {paymentStatus?.error && (
+    <p className="errorMessage">{paymentStatus.message}</p>
+  )}
+</section>
+)}
 
-          {/* ✅ Success or Error Messages */}
-          {paymentStatus?.success && (
-            <p className="successMessage">{paymentStatus.message}</p>
-          )}
-          {paymentStatus?.error && (
-            <p className="errorMessage">{paymentStatus.message}</p>
-          )}
-        </section>
-      )}
-
-      <footer className="footer">
-        <p className="mutedSmall">© {new Date().getFullYear()} CJSF 90.1FM</p>
-      </footer>
-    </div>
-  );
+<footer className="footer">
+<p className="mutedSmall">© {new Date().getFullYear()} CJSF 90.1FM</p>
+</footer>
+</div>
+);
 }
+
