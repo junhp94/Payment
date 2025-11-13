@@ -1,359 +1,202 @@
-import { useEffect, useRef, useState } from "react";
-import "./App.css";
+// App.jsx - Simple Frontend React Application
+import React, { useState, useEffect } from 'react';
 
-const PRESETS = ["1", "2", "3", "5", "10", "Other"];
+function App() {
+  const [orderId] = useState(`DON-${Date.now()}-${Math.floor(Math.random() * 1000)}`);
+  const [amount, setAmount] = useState('5.00');
+  const [program, setProgram] = useState('');
+  const [loading, setLoading] = useState(false);
 
-export default function App() {
-  const [amount, setAmount] = useState("50");
-  const [useOther, setUseOther] = useState(false);
-  const [otherAmount, setOtherAmount] = useState("");
+  const preload = async () => {
+    // Validate amount
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      alert('Please enter a valid donation amount');
+      return;
+    }
 
-  const [program, setProgram] = useState("General");
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [addr1, setAddr1] = useState("");
-  const [addr2, setAddr2] = useState("");
-  const [city, setCity] = useState("");
-  const [province, setProvince] = useState("");
-  const [postal, setPostal] = useState("");
-  const [country, setCountry] = useState("Canada");
+    if (parsedAmount > 11) {
+      alert('Test amounts must be $11.00 or less');
+      return;
+    }
 
-  const [errors, setErrors] = useState({});
-  const [submitting, setSubmitting] = useState(false);
-  const [orderId] = useState(() => `FD-${Date.now()}`);
-
-  const [showPayment, setShowPayment] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState(null);
-
-  const checkoutStartedRef = useRef(false);
-
-  function validate() {
-    const e = {};
-    const amtStr = useOther ? otherAmount : amount;
-    const val = Number(amtStr);
-    if (!amtStr || Number.isNaN(val) || val <= 0) e.amount = "Enter a valid amount.";
-    if (!name.trim()) e.name = "Name is required.";
-    if (!email.trim() || !/^\S+@\S+\.\S+$/.test(email)) e.email = "Valid email is required.";
-    return e;
-  }
-
-  async function onProceed(e) {
-    e.preventDefault();
-    const eMap = validate();
-    setErrors(eMap);
-    if (Object.keys(eMap).length > 0) return;
-
-    setSubmitting(true);
-    setPaymentStatus(null); // Reset previous messages
+    setLoading(true);
 
     try {
-      const donor = {
-        name,
-        email,
-        phone,
-        address1: addr1,
-        address2: addr2,
-        city,
-        province,
-        postal,
-        country,
-        program,
-      };
-
-      const response = await fetch("/api/checkout/preload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      // Call backend to get Moneris ticket
+      const response = await fetch('http://localhost:4000/api/moneris/preload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          amount: useOther ? otherAmount : amount,
-          orderId,
-          donor,
-        }),
+          amount: parseFloat(amount).toFixed(2),
+          orderNo: orderId,
+          contactDetails: {
+            first_name: 'Test',
+            last_name: 'Donor',
+            email: 'test@example.com',
+            phone: '4165551234'
+          }
+        })
       });
 
       const data = await response.json();
 
-      if (data.ticket) {
-        setShowPayment(true);
-
-        // Initialize Moneris Checkout iframe (only once)
-        if (!checkoutStartedRef.current) {
-          checkoutStartedRef.current = true;
-          const CheckoutClass = window.monerisCheckout;
-          if (!CheckoutClass) {
-            setPaymentStatus({
-              error: true,
-              message: "Moneris Checkout script not loaded. Check index.html.",
-            });
-            return;
-          }
-
-          const chkt = new CheckoutClass();
-          chkt.setMode("qa"); // 'qa' for testing
-          chkt.setCheckoutDiv("monerisCheckout");
-
-          chkt.setCallback("payment_complete", (payload) => {
-            console.log("Payment complete:", payload);
-            setPaymentStatus({ success: true, message: "✅ Payment successful! Thank you!" });
-          });
-
-          chkt.setCallback("error_event", (err) => {
-            console.error("Moneris error:", err);
-            setPaymentStatus({ error: true, message: "❌ Payment failed. Please try again." });
-          });
-
-          chkt.startCheckout(data.ticket);
-        }
+      if (data.success && data.ticket) {
+        console.log('Ticket received:', data.ticket);
+        
+        // Initialize Moneris Checkout
+        setTimeout(() => {
+          initializeMonerisCheckout(data.ticket);
+        }, 100);
       } else {
-        throw new Error("No ticket received from backend");
+        alert(data.error || 'Failed to initialize payment. Please try again.');
+        setLoading(false);
       }
     } catch (err) {
-      console.error(err);
-      setPaymentStatus({ error: true, message: "❌ Could not start secure payment. Try again." });
-    } finally {
-      setSubmitting(false);
+      console.error('Payment initialization error:', err);
+      alert('Failed to connect to payment server. Please try again.');
+      setLoading(false);
     }
-  }
+  };
 
-  const disabled = submitting || showPayment;
+  const initializeMonerisCheckout = (ticketNumber) => {
+    // Load Moneris script if not already loaded
+    if (!window.monerisCheckout) {
+      const script = document.createElement('script');
+      script.src = 'https://gatewayt.moneris.com/chktv2/js/chkt_v2.00.js';
+      script.async = true;
+      script.onload = () => {
+        startCheckout(ticketNumber);
+      };
+      document.head.appendChild(script);
+    } else {
+      startCheckout(ticketNumber);
+    }
+  };
+
+  const startCheckout = (ticketNumber) => {
+    const myCheckout = new window.monerisCheckout();
+    
+    myCheckout.setMode("qa"); // Test mode
+    myCheckout.setCheckoutDiv("monerisCheckout");
+    
+    // Callback when payment is complete
+    myCheckout.setCallback("payment_receipt", function(response) {
+      console.log("Payment complete:", response);
+      
+      // Send receipt to backend
+      fetch('http://localhost:4000/api/moneris/receipt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ticket: ticketNumber,
+          response: response
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        alert('Payment successful! Thank you for your donation.');
+        window.location.reload();
+      })
+      .catch(err => {
+        console.error('Receipt verification error:', err);
+        alert('Payment successful! Thank you for your donation.');
+        window.location.reload();
+      });
+    });
+    
+    // Callback when payment is cancelled
+    myCheckout.setCallback("cancel_transaction", function() {
+      console.log("Payment cancelled");
+      alert('Payment was cancelled');
+      setLoading(false);
+      window.location.reload();
+    });
+    
+    // Callback for errors
+    myCheckout.setCallback("error_event", function(error) {
+      console.error("Checkout error:", error);
+      alert('An error occurred during checkout');
+      setLoading(false);
+    });
+    
+    // Start the checkout
+    myCheckout.startCheckout(ticketNumber);
+    setLoading(false);
+  };
 
   return (
-    <div className="wrap">
-      <header className="header">
-        <h1 className="title">Donate to CJSF 90.1FM</h1>
-      </header>
+    <div style={{ maxWidth: 640, margin: "40px auto", fontFamily: "sans-serif" }}>
+      <h1>Donate to CJSF</h1>
+      <p>Order ID: <strong>{orderId}</strong></p>
 
-      <form className="card" onSubmit={onProceed} aria-labelledby="donationForm">
-        <h2 id="donationForm" className="sectionTitle">Donation Amount</h2>
+      <label>
+        Donation Amount (max $11.00 for testing)
+        <br />
+        <input
+          type="number"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          step="0.01"
+          min="0.01"
+          max="11.00"
+          disabled={loading}
+          style={{ width: "100%", marginTop: 6, marginBottom: 16, padding: 8 }}
+        />
+      </label>
 
-        <div className="presetRow" role="group" aria-label="Select donation amount">
-          {PRESETS.map((p) => {
-            const isOther = p === "Other";
-            const selected = !useOther && amount === p;
-            return (
-              <button
-                key={p}
-                type="button"
-                className={`pill ${selected ? "pill--active" : ""}`}
-                disabled={disabled}
-                onClick={() => {
-                  if (isOther) {
-                    setUseOther(true);
-                    setAmount("Other");
-                  } else {
-                    setUseOther(false);
-                    setAmount(p);
-                    setOtherAmount("");
-                  }
-                }}
-              >
-                {isOther ? "Other" : `$${p}`}
-              </button>
-            );
-          })}
-        </div>
+      <label>
+        Program (optional)
+        <br />
+        <input
+          type="text"
+          value={program}
+          onChange={(e) => setProgram(e.target.value)}
+          disabled={loading}
+          style={{ width: "100%", marginTop: 6, marginBottom: 16, padding: 8 }}
+        />
+      </label>
 
-        {useOther && (
-          <div className="fieldRow">
-            <label className="label" htmlFor="otherAmount">Other amount (CAD)</label>
-            <input
-              id="otherAmount"
-              type="number"
-              step="0.01"
-              min="1"
-              inputMode="decimal"
-              className={`input ${errors.amount ? "input--error" : ""}`}
-              placeholder="e.g., 35.00"
-              value={otherAmount}
-              onChange={(e) => setOtherAmount(e.target.value)}
-              disabled={disabled}
-            />
-            {errors.amount && <div className="error">{errors.amount}</div>}
-          </div>
-        )}
+      <button 
+        onClick={preload} 
+        disabled={loading}
+        style={{ 
+          padding: 12, 
+          background: loading ? "#666" : "black", 
+          color: "white",
+          border: "none",
+          cursor: loading ? "not-allowed" : "pointer",
+          fontSize: 16,
+          width: "100%"
+        }}
+      >
+        {loading ? 'Loading...' : 'Start Secure Payment'}
+      </button>
 
-        {!useOther && errors.amount && <div className="error">{errors.amount}</div>}
-
-        <div className="divider" />
-
-<h2 className="sectionTitle">Program Designation (optional)</h2>
-<div className="fieldRow">
-  <label className="label" htmlFor="program">Program</label>
-  <select
-    id="program"
-    className="select"
-    value={program}
-    onChange={(e) => setProgram(e.target.value)}
-    disabled={disabled}
-  >
-    <option>General</option>
-    <option>News & Public Affairs</option>
-    <option>Music Programming</option>
-    <option>Training & Workshops</option>
-    <option>Special Projects</option>
-  </select>
-</div>
-
-<div className="divider" />
-
-<h2 className="sectionTitle">Your Information</h2>
-
-<div className="grid2">
-  <div className="fieldCol">
-    <label className="label" htmlFor="name">Full Name</label>
-    <input
-      id="name"
-      className={`input ${errors.name ? "input--error" : ""}`}
-      value={name}
-      onChange={(e) => setName(e.target.value)}
-      disabled={disabled}
-      placeholder="Jane Doe"
-      autoComplete="name"
-    />
-    {errors.name && <div className="error">{errors.name}</div>}
-  </div>
-
-  <div className="fieldCol">
-    <label className="label" htmlFor="email">Email</label>
-    <input
-      id="email"
-      type="email"
-      className={`input ${errors.email ? "input--error" : ""}`}
-      value={email}
-      onChange={(e) => setEmail(e.target.value)}
-      disabled={disabled}
-      placeholder="jane@example.com"
-      autoComplete="email"
-    />
-    {errors.email && <div className="error">{errors.email}</div>}
-  </div>
-</div>
-
-<div className="grid2">
-  <div className="fieldCol">
-    <label className="label" htmlFor="phone">Phone (optional)</label>
-    <input
-      id="phone"
-      className="input"
-      value={phone}
-      onChange={(e) => setPhone(e.target.value)}
-      disabled={disabled}
-      placeholder="(xxx) xxx-xxxx"
-      autoComplete="tel"
-    />
-  </div>
-</div>
-
-<div className="grid2">
-  <div className="fieldCol">
-    <label className="label" htmlFor="addr1">Address Line 1</label>
-    <input
-      id="addr1"
-      className="input"
-      value={addr1}
-      onChange={(e) => setAddr1(e.target.value)}
-      disabled={disabled}
-      placeholder="123 University Dr."
-      autoComplete="address-line1"
-    />
-  </div>
-  <div className="fieldCol">
-    <label className="label" htmlFor="addr2">Address Line 2 (optional)</label>
-    <input
-      id="addr2"
-      className="input"
-      value={addr2}
-      onChange={(e) => setAddr2(e.target.value)}
-      disabled={disabled}
-      placeholder="Apt / Suite"
-      autoComplete="address-line2"
-    />
-  </div>
-</div>
-
-<div className="grid3">
-  <div className="fieldCol">
-    <label className="label" htmlFor="city">City</label>
-    <input
-      id="city"
-      className="input"
-      value={city}
-      onChange={(e) => setCity(e.target.value)}
-      disabled={disabled}
-      autoComplete="address-level2"
-    />
-  </div>
-  <div className="fieldCol">
-    <label className="label" htmlFor="province">Province/State</label>
-    <input
-      id="province"
-      className="input"
-      value={province}
-      onChange={(e) => setProvince(e.target.value)}
-      disabled={disabled}
-      autoComplete="address-level1"
-    />
-  </div>
-  <div className="fieldCol">
-    <label className="label" htmlFor="postal">Postal/ZIP</label>
-    <input
-      id="postal"
-      className="input"
-      value={postal}
-      onChange={(e) => setPostal(e.target.value)}
-      disabled={disabled}
-      autoComplete="postal-code"
-    />
-  </div>
-</div>
-
-<div className="fieldRow">
-  <label className="label" htmlFor="country">Country</label>
-  <input
-    id="country"
-    className="input"
-    value={country}
-    onChange={(e) => setCountry(e.target.value)}
-    disabled={disabled}
-    autoComplete="country-name"
-  />
-</div>
-
-<div className="ctaRow">
-  <button
-    type="submit"
-    className="btnPrimary"
-    disabled={disabled}
-    aria-disabled={disabled}
-  >
-    {submitting || showPayment ? "Proceeding…" : "Proceed to Secure Payment"}
-  </button>
-  <div className="note">Card processing is handled securely by Moneris.</div>
-</div>
-</form>
-
-{showPayment && (
-<section className="card paymentCard" aria-live="polite">
-  <h2 className="sectionTitle">Secure Payment</h2>
-  <p className="muted">
-    Order ID: <strong>{orderId}</strong> — Amount:{" "}
-    <strong>${useOther ? Number(otherAmount).toFixed(2) : Number(amount).toFixed(2)} CAD</strong>
-  </p>
-  <div id="monerisCheckout" className="monerisBox" />
-
-  {paymentStatus?.success && (
-    <p className="successMessage">{paymentStatus.message}</p>
-  )}
-  {paymentStatus?.error && (
-    <p className="errorMessage">{paymentStatus.message}</p>
-  )}
-</section>
-)}
-
-<footer className="footer">
-<p className="mutedSmall">© {new Date().getFullYear()} CJSF 90.1FM</p>
-</footer>
-</div>
-);
+      <div id="monerisCheckout" style={{ marginTop: 20, minHeight: 420 }} />
+      
+      <div style={{ 
+        marginTop: 20, 
+        padding: 12, 
+        background: "#f0f0f0", 
+        borderRadius: 4,
+        fontSize: 14
+      }}>
+        <strong>Test Info:</strong>
+        <ul style={{ marginTop: 8, paddingLeft: 20 }}>
+          <li>Use amounts ending in .00 for approval (e.g., $5.00, $9.00)</li>
+          <li>Test Visa: 4242424242424242</li>
+          <li>Test Mastercard: 5454545454545454</li>
+          <li>Expiry: Any future date (e.g., 12/25)</li>
+          <li>CVV: Any 3 digits (e.g., 123)</li>
+        </ul>
+      </div>
+    </div>
+  );
 }
 
+export default App;
